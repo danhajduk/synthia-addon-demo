@@ -3,7 +3,7 @@ import sys
 import subprocess
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, JSONResponse, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from datetime import datetime
 
@@ -69,7 +69,7 @@ def start_worker():
         stderr=None,
     )
 
-    
+
 
     return {
         "ok": True,
