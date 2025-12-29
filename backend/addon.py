@@ -7,7 +7,6 @@ from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 from datetime import datetime
 
-from .models import Worker
 
 router = APIRouter()
 

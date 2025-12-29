@@ -1,60 +1,33 @@
 from enum import Enum
+from typing import Any, Dict, Optional
+from pydantic import BaseModel, Field
+from pydantic.config import ConfigDict
+from typing import List
 
+class WorkerCapabilities(BaseModel):
+    """
+    Keep flexible: allow addon-specific fields without breaking changes.
+    Examples:
+      job_types: ["load30", "render"]
+      gpu: true
+      model: "sdxl"
+    """
+    model_config = ConfigDict(extra="allow")
 
-class Worker:
-    # -----------------------
-    # Enums (nested by design)
-    # -----------------------
+    job_types: Optional[List[str]] = None
+    gpu: Optional[bool] = None
+    cpu_heavy_ok: Optional[bool] = None
 
-    class Priority(str, Enum):
-        LOW = "LOW"
-        NORMAL = "NORMAL"
-        HIGH = "HIGH"
-        URGENT = "URGENT"
+class RegisterWorkerRequest(BaseModel):
+    addon_id: str
+    worker_id: str
 
-    class JobState(str, Enum):
-        QUEUED = "QUEUED"
-        CLAIMED = "CLAIMED"
-        PREPARING = "PREPARING"
-        LEASE_PENDING = "LEASE_PENDING"
-        RUNNING = "RUNNING"
-        DONE = "DONE"
-        FAILED = "FAILED"
-        CANCELED = "CANCELED"
-        TIMEOUT = "TIMEOUT"
+    pid: Optional[int] = Field(
+        default=None,
+        description="OS process ID of the worker process"
+    )
 
-    class LeaseState(str, Enum):
-        # Keep names stable (as requested)
-        active = "ACTIVE"
-        expired = "EXPIRED"
-        released = "RELEASED"
+    capabilities: WorkerCapabilities = Field(default_factory=WorkerCapabilities)
 
-    class FinalStatus(str, Enum):
-        SUCCEEDED = "SUCCEEDED"
-        FAILED = "FAILED"
-        CANCELED = "CANCELED"
-        TIMEOUT = "TIMEOUT"
-
-    class EntityType(str, Enum):
-        JOB = "JOB"
-        LEASE = "LEASE"
-
-    # -----------------------
-    # Worker core
-    # -----------------------
-
-    def __init__(self, worker_id: str) -> None:
-        self.worker_id = worker_id
-        self.current_state = self.JobState.QUEUED
-
-    def is_idle(self) -> bool:
-        return self.current_state in {
-            self.JobState.QUEUED,
-            self.JobState.DONE,
-            self.JobState.FAILED,
-            self.JobState.CANCELED,
-            self.JobState.TIMEOUT,
-        }
-
-    def set_state(self, state: "Worker.JobState") -> None:
-        self.current_state = state
+    # Optional extra metadata (host, container, version, etc.)
+    meta: Dict[str, Any] = Field(default_factory=dict)
