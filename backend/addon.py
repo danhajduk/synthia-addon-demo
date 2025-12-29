@@ -81,22 +81,12 @@ def _http_post_json(url: str, payload: Dict[str, Any], timeout_sec: int = 10) ->
 #-----------------------
 # API Endpoints
 #-----------------------   
-@router.get("/status")
-def status():
-    paths = ensure_dirs()
-    cfg = DEFAULT_CONFIG.model_dump()
+@router.get("/health")
+def health():
+    if not CURRENT_PATH.exists():
+        publish_placeholder()
+    return {"status": "ok", "addon": "visuals"}
 
-    # Ensure we have something published
-    current_path = paths["published"] / cfg["weather_scene"]["publish_filename"]
-    if not current_path.exists():
-        publish_placeholder(current_path, subtitle="Step 0: addon online")
-
-    return {
-        "status": "ok",
-        "enabled_renderers": cfg["enabled_renderers"],
-        "paths": {k: str(v) for k, v in paths.items()},
-        "published_current": str(current_path),
-    }
 
 @router.post("/start_worker", response_model=WorkerStartResult)
 def start_worker() -> WorkerStartResult:
