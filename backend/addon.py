@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+# backend/addon.py
 import json
 import logging
 import os
