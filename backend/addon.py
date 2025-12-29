@@ -57,6 +57,28 @@ class WorkerStartResult(BaseModel):
 
 _worker_proc: subprocess.Popen | None = None
 
+
+class BackendAddon:
+    """
+    Minimal object to satisfy the core loader.
+
+    It only needs:
+      - id: str
+      - name: str
+      - router: APIRouter
+    """
+    def __init__(self, id: str, name: str, router: APIRouter) -> None:
+        self.id = id
+        self.name = name
+        self.router = router
+
+
+addon = BackendAddon(
+    id="demo",
+    name="Demo Addon",
+    router=router,
+)
+
 #-----------------------
 # Helpers
 #-----------------------
@@ -87,6 +109,19 @@ def health():
         publish_placeholder()
     return {"status": "ok", "addon": "visuals"}
 
+@router.get("/status")
+def status():
+    # Status should not *need* Pillow, but we publish once so UI/HA has an image.
+    if not CURRENT_PATH.exists():
+        publish_placeholder()
+
+    return {
+        "status": "ok",
+        "addon": "visuals",
+        "runtime_root": str(RUNTIME_ROOT),
+        "current_image": str(CURRENT_PATH),
+        "current_exists": CURRENT_PATH.exists(),
+    }
 
 @router.post("/start_worker", response_model=WorkerStartResult)
 def start_worker() -> WorkerStartResult:
