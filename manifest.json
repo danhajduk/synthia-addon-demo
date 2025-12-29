@@ -27,7 +27,7 @@
   },
   "backend": {
     "entry": "./backend/addon.py",
-    "setup": "./backend/setup.py",
+    "setup": "",
     "healthPath": "/status",
     "requiresConfig": []
   }
