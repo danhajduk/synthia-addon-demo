@@ -1,35 +1,15 @@
+import json
 import os
 import sys
 import subprocess
-
-from fastapi import APIRouter
-from fastapi.responses import FileResponse, JSONResponse
-from pathlib import Path
-from datetime import datetime
-
-
-import importlib.util
+import urllib.request
 from pathlib import Path
 
-_models_path = Path(__file__).with_name("models.py")
-_spec = importlib.util.spec_from_file_location("demo_models", _models_path)
-if _spec is None or _spec.loader is None:
-    raise RuntimeError(f"Unable to load models.py: {_models_path}")
-
-_models = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_models)
-
-RegisterWorkerRequest = _models.RegisterWorkerRequest
-WorkerCapabilities = _models.WorkerCapabilities
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
 
-# Keep runtime inside addon folder: addons/visuals/runtime/...
-ADDON_ROOT = Path(__file__).resolve().parents[1]  # .../addons/visuals
-
-
 _worker_proc: subprocess.Popen | None = None
-
 
 
 @router.get("/health")
@@ -41,106 +21,141 @@ def health():
 def status():
     running = _worker_proc is not None and _worker_proc.poll() is None
     pid = _worker_proc.pid if running else None
+    return {"status": "ok", "addon": "demo", "worker_running": running, "worker_pid": pid}
 
-    return {
-        "status": "ok",
-        "addon": "demo",
-        "worker_running": running,
-        "worker_pid": pid,
-    }
 
-@router.get("/start_worker")
+@router.post("/start_worker")
 def start_worker():
+    """
+    1) Spawn worker.py with same venv (sys.executable)
+    2) Register worker in scheduler: POST {BASE_URL}/workers/register
+    """
     global _worker_proc
 
-    # idempotent: if already running, return existing pid
-    if _worker_proc is not None and _worker_proc.poll() is None:
-        return {
-            "ok": True,
-            "already_running": True,
-            "pid": _worker_proc.pid,
-        }
+    base_url = os.environ.get("SYNTHIA_SCHEDULER_BASE_URL", "http://localhost:9001/api/scheduler")
+    addon_id = os.environ.get("SYNTHIA_ADDON_ID", "demo")
+    worker_id = os.environ.get("SYNTHIA_WORKER_ID", f"visuals-worker-{os.getpid()}")
+    job_type = os.environ.get("SYNTHIA_JOB_TYPE", "demo")
 
-    worker_py = Path(__file__).with_name("worker.py")
-    if not worker_py.exists():
-        raise HTTPException(status_code=500, detail=f"worker.py not found: {worker_py}")
+    # Capabilities: take from env if provided; otherwise omit (scheduler model treats Optional)
+    job_types_env = os.environ.get("SYNTHIA_JOB_TYPES")  # "a,b,c"
+    gpu_env = os.environ.get("SYNTHIA_GPU")              # "1"/"0"
+    cpu_heavy_ok_env = os.environ.get("SYNTHIA_CPU_HEAVY_OK")  # "1"/"0"
 
-    env = os.environ.copy()
-    env.setdefault("SYNTHIA_SCHEDULER_BASE_URL", "http://localhost:9001/api/scheduler")
-    env.setdefault("SYNTHIA_ADDON_ID", "demo")
-    env.setdefault("SYNTHIA_WORKER_ID", "visuals-worker-demo")  # override if you want
-    env.setdefault("SYNTHIA_JOB_TYPE", "demo")
+    capabilities: dict = {}
+    if job_types_env:
+        capabilities["job_types"] = [s.strip() for s in job_types_env.split(",") if s.strip()]
+    if gpu_env is not None:
+        capabilities["gpu"] = (gpu_env == "1")
+    if cpu_heavy_ok_env is not None:
+        capabilities["cpu_heavy_ok"] = (cpu_heavy_ok_env == "1")
 
-    # SAME VENV as the backend process:
-    # sys.executable points at .../Synthia/.venv/bin/python if uvicorn is running in that venv.
-    _worker_proc = subprocess.Popen(
-        [sys.executable, str(worker_py)],
-        cwd=str(worker_py.parent),
-        env=env,
-        stdout=None,  # inherit for dev visibility
-        stderr=None,
+    # ---------- 1) start worker (idempotent) ----------
+    already_running = _worker_proc is not None and _worker_proc.poll() is None
+
+    if not already_running:
+        worker_py = Path(__file__).with_name("worker.py")
+        if not worker_py.exists():
+            raise HTTPException(status_code=500, detail=f"worker.py not found: {worker_py}")
+
+        env = os.environ.copy()
+        env["SYNTHIA_SCHEDULER_BASE_URL"] = base_url
+        env["SYNTHIA_ADDON_ID"] = addon_id
+        env["SYNTHIA_WORKER_ID"] = worker_id
+        env["SYNTHIA_JOB_TYPE"] = job_type
+
+        _worker_proc = subprocess.Popen(
+            [sys.executable, str(worker_py)],
+            cwd=str(worker_py.parent),
+            env=env,
+            stdout=None,
+            stderr=None,
+        )
+
+    running = _worker_proc is not None and _worker_proc.poll() is None
+    pid = _worker_proc.pid if running else None
+
+    if not running or pid is None:
+        raise HTTPException(status_code=500, detail="worker failed to start")
+
+    # ---------- 2) register worker ----------
+    reg_payload: dict = {
+        "addon_id": addon_id,
+        "worker_id": worker_id,
+        "pid": pid,
+        "capabilities": capabilities if capabilities else {},
+        "meta": {
+            "job_type": job_type,
+        },
+    }
+
+    reg_url = f"{base_url.rstrip('/')}/workers/register"
+    data = json.dumps(reg_payload).encode("utf-8")
+
+    req = urllib.request.Request(
+        reg_url,
+        data=data,
+        method="POST",
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
     )
 
-
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            reg_resp = json.loads(body)
+    except Exception as e:
+        # Worker started but registration failed — return both facts.
+        return {
+            "ok": False,
+            "addon": "demo",
+            "started": True,
+            "already_running": already_running,
+            "pid": pid,
+            "python": sys.executable,
+            "register_ok": False,
+            "register_error": f"{type(e).__name__}: {e}",
+            "register_url": reg_url,
+            "register_payload": reg_payload,
+        }
 
     return {
         "ok": True,
-        "already_running": False,
-        "pid": _worker_proc.pid,
+        "addon": "demo",
+        "started": True,
+        "already_running": already_running,
+        "pid": pid,
         "python": sys.executable,
-        "worker": str(worker_py),
+        "register_ok": True,
+        "register_response": reg_resp,
     }
+
 
 @router.post("/stop_worker")
 def stop_worker():
     global _worker_proc
 
     if _worker_proc is None or _worker_proc.poll() is not None:
-        return {
-            "ok": True,
-            "already_stopped": True,
-        }
+        return {"ok": True, "already_stopped": True}
 
     pid = _worker_proc.pid
-
-    # Graceful shutdown
-    _worker_proc.terminate()  # SIGTERM
+    _worker_proc.terminate()
 
     try:
         _worker_proc.wait(timeout=10)
         stopped = True
     except subprocess.TimeoutExpired:
-        # Last resort
-        _worker_proc.kill()  # SIGKILL
+        _worker_proc.kill()
         stopped = False
 
     _worker_proc = None
-
-    return {
-        "ok": True,
-        "pid": pid,
-        "stopped_gracefully": stopped,
-    }
-
+    return {"ok": True, "pid": pid, "stopped_gracefully": stopped}
 
 
 class BackendAddon:
-    """
-    Minimal object to satisfy the core loader.
-
-    It only needs:
-      - id: str
-      - name: str
-      - router: APIRouter
-    """
     def __init__(self, id: str, name: str, router: APIRouter) -> None:
         self.id = id
         self.name = name
         self.router = router
 
 
-addon = BackendAddon(
-    id="demo",
-    name="Demo Addon",
-    router=router,
-)
+addon = BackendAddon(id="demo", name="Demo Addon", router=router)
