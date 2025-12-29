@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Optional
 
 logger = logging.getLogger("synthia.addons.demo")
 router = APIRouter()
