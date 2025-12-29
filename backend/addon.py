@@ -3,10 +3,12 @@ import sys
 import subprocess
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTTPException
 from pathlib import Path
 from datetime import datetime
 
+
+from .models import RegisterWorkerRequest, WorkerCapabilities
 
 router = APIRouter()
 
@@ -66,6 +68,8 @@ def start_worker():
         stdout=None,  # inherit for dev visibility
         stderr=None,
     )
+
+    
 
     return {
         "ok": True,
