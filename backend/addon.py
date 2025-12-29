@@ -10,13 +10,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 logger = logging.getLogger("synthia.addons.demo")
 
 router = APIRouter()
 
-# Keep a handle to the spawned worker process (dev/demo only).
 _worker_proc: subprocess.Popen | None = None
 
 
@@ -67,17 +66,16 @@ def _proc_running(p: subprocess.Popen | None) -> bool:
     return p is not None and p.poll() is None
 
 
-def _default_scheduler_base_url() -> str:
-    # Scheduler lives in the core backend.
+def _scheduler_base_url() -> str:
     return os.environ.get("SYNTHIA_SCHEDULER_BASE_URL", "http://localhost:9001/api/scheduler")
 
 
-def _default_addon_id() -> str:
+def _addon_id() -> str:
     return os.environ.get("SYNTHIA_ADDON_ID", "demo")
 
 
-def _default_worker_id() -> str:
-    # Stable ID is better than pid-based. Allow override.
+def _worker_id() -> str:
+    # stable ID by default; override via env if you spawn multiple
     return os.environ.get("SYNTHIA_WORKER_ID", "demo-worker-01")
 
 
@@ -92,9 +90,9 @@ def health() -> dict:
 
 @router.get("/status", response_model=AddonStatus)
 def status() -> AddonStatus:
-    base_url = _default_scheduler_base_url()
-    addon_id = _default_addon_id()
-    worker_id = _default_worker_id()
+    base_url = _scheduler_base_url()
+    addon_id = _addon_id()
+    worker_id = _worker_id()
 
     running = _proc_running(_worker_proc)
     pid = _worker_proc.pid if running else None
@@ -112,18 +110,21 @@ def status() -> AddonStatus:
 def start_worker() -> WorkerStartResult:
     """
     Spawns demo worker process and registers it with the scheduler.
-
-    - Worker "heartbeat" is /jobs/claim polling (your chosen design).
-    - This endpoint is idempotent: returns already_running if process exists.
+    Worker liveness is maintained by /jobs/claim polling (your design).
     """
     global _worker_proc
 
     try:
-        base_url = _default_scheduler_base_url()
-        addon_id = _default_addon_id()
-        worker_id = _default_worker_id()
+        base_url = _scheduler_base_url()
+        addon_id = _addon_id()
+        worker_id = _worker_id()
 
-        # If worker already running, just (re)register it (useful if scheduler restarted).
+        # worker.py must live next to addon.py (same folder)
+        worker_py = Path(__file__).with_name("worker.py")
+        if not worker_py.exists():
+            raise RuntimeError(f"worker.py not found at {worker_py}")
+
+        # already running: re-register and return
         if _proc_running(_worker_proc):
             pid = _worker_proc.pid
             register_url = f"{base_url.rstrip('/')}/workers/register"
@@ -131,13 +132,8 @@ def start_worker() -> WorkerStartResult:
                 "addon_id": addon_id,
                 "worker_id": worker_id,
                 "pid": pid,
-                "capabilities": {
-                    "job_types": ["demo"],  # change as needed
-                },
-                "meta": {
-                    "spawned_by": "demo_addon_api",
-                    "python": sys.executable,
-                },
+                "capabilities": {"job_types": ["demo"]},
+                "meta": {"spawned_by": "demo_addon_api", "python": sys.executable},
             }
             _http_post_json(register_url, payload, timeout_sec=10)
 
@@ -150,21 +146,16 @@ def start_worker() -> WorkerStartResult:
                 message="Worker already running; re-registered with scheduler.",
             )
 
-        # Spawn worker.py next to this file
-        python = sys.executable
-        worker_py = Path(__file__).with_name("worker.py")
-        if not worker_py.exists():
-            raise RuntimeError(f"worker.py not found at {worker_py}")
-
+        # spawn worker
         env = os.environ.copy()
         env["SYNTHIA_SCHEDULER_BASE_URL"] = base_url
         env["SYNTHIA_ADDON_ID"] = addon_id
         env["SYNTHIA_WORKER_ID"] = worker_id
-        env.setdefault("SYNTHIA_ACCEPT_JOB_TYPES", "demo")  # comma-separated, worker can parse
+        env.setdefault("SYNTHIA_ACCEPT_JOB_TYPES", "demo")
         env.setdefault("SYNTHIA_POLL_INTERVAL_SEC", "2")
 
         _worker_proc = subprocess.Popen(
-            [python, str(worker_py)],
+            [sys.executable, str(worker_py)],
             env=env,
             cwd=str(worker_py.parent),
             stdout=None,
@@ -173,19 +164,14 @@ def start_worker() -> WorkerStartResult:
 
         pid = _worker_proc.pid
 
-        # Register with scheduler
+        # register with scheduler
         register_url = f"{base_url.rstrip('/')}/workers/register"
         payload = {
             "addon_id": addon_id,
             "worker_id": worker_id,
             "pid": pid,
-            "capabilities": {
-                "job_types": ["demo"],  # match your worker's accepted types
-            },
-            "meta": {
-                "spawned_by": "demo_addon_api",
-                "python": python,
-            },
+            "capabilities": {"job_types": ["demo"]},
+            "meta": {"spawned_by": "demo_addon_api", "python": sys.executable},
         }
         _http_post_json(register_url, payload, timeout_sec=10)
 
@@ -204,18 +190,10 @@ def start_worker() -> WorkerStartResult:
 
 
 # -----------------------
-# Minimal addon object (matches the visuals addon loader shape)
+# Minimal addon object (matches visuals loader shape)
 # -----------------------
 
 class BackendAddon:
-    """
-    Minimal object to satisfy the core loader.
-
-    It only needs:
-      - id: str
-      - name: str
-      - router: APIRouter
-    """
     def __init__(self, id: str, name: str, router: APIRouter) -> None:
         self.id = id
         self.name = name
