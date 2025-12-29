@@ -6,7 +6,6 @@ from fastapi import APIRouter
 logger = logging.getLogger("synthia.addons.demo")
 router = APIRouter()
 
-_worker_proc: subprocess.Popen | None = None
 
 
 @router.get("/health")
@@ -16,14 +15,10 @@ def health():
 
 @router.get("/status")
 def status():
-    running = _worker_proc is not None and _worker_proc.poll() is None
-    pid = _worker_proc.pid if running else None
 
     return {
         "status": "ok",
         "addon": "demo",
-        "worker_running": running,
-        "worker_pid": pid,
         "addon_id": os.environ.get("ADDON_ID", "demo"),
         "worker_id": os.environ.get("WORKER_ID", "visuals-worker-unknown"),
     }
