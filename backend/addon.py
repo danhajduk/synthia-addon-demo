@@ -1,4 +1,3 @@
-# backend/addon.py
 import json
 import logging
 import os
@@ -6,27 +5,26 @@ import subprocess
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 logger = logging.getLogger("synthia.addons.demo")
-
 router = APIRouter()
 
 _worker_proc: subprocess.Popen | None = None
 
 
 # -----------------------
-# Models
+# Models (NO Optional[], NO future annotations)
 # -----------------------
 
 class WorkerStartResult(BaseModel):
     started: bool
     already_running: bool
     worker_id: str
-    pid: Optional[int] = None
+    pid: int | None = None
     registered: bool = False
     message: str
 
@@ -35,7 +33,7 @@ class AddonStatus(BaseModel):
     status: str = "ok"
     addon: str = "demo"
     worker_running: bool
-    worker_pid: Optional[int] = None
+    worker_pid: int | None = None
     scheduler_base_url: str
     addon_id: str
     worker_id: str
@@ -45,7 +43,7 @@ class AddonStatus(BaseModel):
 # Helpers
 # -----------------------
 
-def _http_post_json(url: str, payload: Dict[str, Any], timeout_sec: int = 10) -> Dict[str, Any]:
+def _http_post_json(url: str, payload: dict[str, Any], timeout_sec: int = 10) -> dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url,
@@ -74,7 +72,6 @@ def _addon_id() -> str:
 
 
 def _worker_id() -> str:
-    # stable ID by default; override via env if you spawn multiple
     return os.environ.get("SYNTHIA_WORKER_ID", "demo-worker-01")
 
 
@@ -107,10 +104,6 @@ def status() -> AddonStatus:
 
 @router.post("/start_worker", response_model=WorkerStartResult)
 def start_worker() -> WorkerStartResult:
-    """
-    Spawns demo worker process and registers it with the scheduler.
-    Worker liveness is maintained by /jobs/claim polling (your design).
-    """
     global _worker_proc
 
     try:
@@ -118,12 +111,10 @@ def start_worker() -> WorkerStartResult:
         addon_id = _addon_id()
         worker_id = _worker_id()
 
-        # worker.py must live next to addon.py (same folder)
         worker_py = Path(__file__).with_name("worker.py")
         if not worker_py.exists():
             raise RuntimeError(f"worker.py not found at {worker_py}")
 
-        # already running: re-register and return
         if _proc_running(_worker_proc):
             pid = _worker_proc.pid
             register_url = f"{base_url.rstrip('/')}/workers/register"
@@ -145,7 +136,6 @@ def start_worker() -> WorkerStartResult:
                 message="Worker already running; re-registered with scheduler.",
             )
 
-        # spawn worker
         env = os.environ.copy()
         env["SYNTHIA_SCHEDULER_BASE_URL"] = base_url
         env["SYNTHIA_ADDON_ID"] = addon_id
@@ -160,10 +150,8 @@ def start_worker() -> WorkerStartResult:
             stdout=None,
             stderr=None,
         )
-
         pid = _worker_proc.pid
 
-        # register with scheduler
         register_url = f"{base_url.rstrip('/')}/workers/register"
         payload = {
             "addon_id": addon_id,
@@ -189,7 +177,7 @@ def start_worker() -> WorkerStartResult:
 
 
 # -----------------------
-# Minimal addon object (matches visuals loader shape)
+# Minimal addon object (visuals-style)
 # -----------------------
 
 class BackendAddon:
@@ -199,8 +187,4 @@ class BackendAddon:
         self.router = router
 
 
-addon = BackendAddon(
-    id="demo",
-    name="Demo Addon",
-    router=router,
-)
+addon = BackendAddon(id="demo", name="Demo Addon", router=router)
