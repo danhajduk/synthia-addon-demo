@@ -8,7 +8,19 @@ from pathlib import Path
 from datetime import datetime
 
 
-from .models import RegisterWorkerRequest, WorkerCapabilities
+import importlib.util
+from pathlib import Path
+
+_models_path = Path(__file__).with_name("models.py")
+_spec = importlib.util.spec_from_file_location("demo_models", _models_path)
+if _spec is None or _spec.loader is None:
+    raise RuntimeError(f"Unable to load models.py: {_models_path}")
+
+_models = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_models)
+
+RegisterWorkerRequest = _models.RegisterWorkerRequest
+WorkerCapabilities = _models.WorkerCapabilities
 
 router = APIRouter()
 
