@@ -19,9 +19,9 @@
   "replaced_by": null,
 
   "frontend": {
-    "basePath": "/addons/demo",
-    "hasSettingsPage": true,
-    "showInSidebar": true,
+    "basePath": "",
+    "hasSettingsPage": false,
+    "showInSidebar": false,
     "sidebarLabel": "Demo",
     "showOnFrontpage": false
   },
