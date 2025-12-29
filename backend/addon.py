@@ -51,10 +51,7 @@ def status():
 
     return {
         "status": "ok",
-        "addon": "visuals",
-        "runtime_root": str(RUNTIME_ROOT),
-        "current_image": str(CURRENT_PATH),
-        "current_exists": CURRENT_PATH.exists(),
+        "addon": "demo",
     }
 
 
